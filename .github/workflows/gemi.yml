@@ -4,57 +4,44 @@ on:
   workflow_dispatch:
     inputs:
       target_repo:
-        description: 'Target Repo (e.g. ptitSeb/box64 or NVIDIAGameWorks/bridge-remix)'
+        description: 'Target Repo (e.g. ptitseb/box64 or NVIDIAGameWorks/bridge-remix)'
         required: true
         type: string
       ref:
-        description: 'Commit SHA (short/long) or Tag (e.g. c40116b or v1.0.0)'
+        description: 'Commit SHA (short/long) or Tag (e.g. 7eeb501 or v0.3.2)'
         required: true
         type: string
       branch_name:
-        description: 'Branch to trigger build on'
+        description: 'Target branch to push commit to'
         required: false
         default: 'main'
         type: string
-      cleanup_commit_log:
-        description: 'Reset branch back to original state after trigger? (true/false)'
-        required: false
-        default: true
-        type: boolean
 
 jobs:
   rebuild:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Local Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 0
 
-      - name: Save Original Branch State & Workflows
-        run: |
-          # Save the current commit hash so we can revert back to it later
-          ORIGINAL_SHA=$(git rev-parse HEAD)
-          echo "ORIGINAL_SHA=$ORIGINAL_SHA" >> $GITHUB_ENV
-
-          # Backup local workflows
-          mkdir -p /tmp/workflow_backup
-          cp -r .github/workflows/* /tmp/workflow_backup/ 2>/dev/null || true
-
-      - name: Configure Git
+      - name: Backup Rebuilder Workflow to 'rebuilder' Branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Saves this workflow to a dedicated 'rebuilder' branch so it is never lost
+          git checkout -B rebuilder
+          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git rebuilder --force
 
-      - name: Fetch Target Code (Supports Short SHA, Tag, Full SHA)
+      - name: Fetch Target Commit / Tag
         run: |
           git remote add target "https://github.com/${{ inputs.target_repo }}.git"
           git fetch target --tags
 
-          git checkout -B "${{ inputs.branch_name }}"
-
-          # Resolve short SHA, tag, or full SHA
+          # Resolve short SHA, tag, or full SHA to exact commit hash
           TARGET_COMMIT=$(git rev-parse --verify "${{ inputs.ref }}" 2>/dev/null || \
                           git rev-parse --verify "target/${{ inputs.ref }}" 2>/dev/null || \
                           git rev-parse --verify "refs/tags/${{ inputs.ref }}" 2>/dev/null || \
@@ -66,33 +53,10 @@ jobs:
           fi
 
           echo "Resolved Commit: $TARGET_COMMIT"
-          git reset --hard "$TARGET_COMMIT"
+          echo "TARGET_COMMIT=$TARGET_COMMIT" >> $GITHUB_ENV
 
-      - name: Patch Branch Triggers
+      - name: Push Exact Target Commit
         run: |
-          if [ -d ".github/workflows" ]; then
-            sed -i 's/branches: .*/branches: ["*"]/g' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null || true
-          fi
-
-      - name: Restore Rebuilder Workflow
-        run: |
-          mkdir -p .github/workflows
-          cp -r /tmp/workflow_backup/* .github/workflows/ 2>/dev/null || true
-          git add .github/workflows/
-          git commit -m "Temp build commit" || true
-
-      - name: Push Build Commit
-        run: |
-          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git "${{ inputs.branch_name }}" --force
-
-      - name: Clean Up Commit History
-        if: ${{ inputs.cleanup_commit_log }}
-        run: |
-          echo "Waiting 30 seconds for GitHub Actions to pick up the run..."
-          sleep 30
-
-          echo "Resetting branch '${{ inputs.branch_name }}' back to original SHA: $ORIGINAL_SHA"
-          git reset --hard "$ORIGINAL_SHA"
-          
-          # Force push to remove the temporary build commit from history
-          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git "${{ inputs.branch_name }}" --force
+          # Pushes $TARGET_COMMIT directly as the HEAD of the target branch.
+          # No extra commits, patches, or modifications are appended.
+          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git "$TARGET_COMMIT:refs/heads/${{ inputs.branch_name }}" --force
