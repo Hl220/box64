@@ -1,0 +1,30 @@
+name: Soft Reset Commits
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: 'Number of latest commits to soft reset'
+        required: true
+        type: number
+        default: 1
+
+jobs:
+  delete-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full history with tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Soft reset and amend into previous commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git reset --soft HEAD~${{ inputs.count }}
+          git commit --amend --no-edit
+          git push origin ${{ github.ref_name }} --force

@@ -1,0 +1,83 @@
+name: Rebuild Expired Artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: 'Target Repo (e.g. NVIDIAGameWorks/bridge-remix)'
+        required: true
+        type: string
+      ref:
+        description: 'Commit SHA (short/long) or Tag (e.g. c40116b or v1.0.0)'
+        required: true
+        type: string
+      branch_name:
+        description: 'Target branch in your repo to trigger the build'
+        required: false
+        default: 'build-artifact'
+        type: string
+
+permissions:
+  contents: write
+
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Local Repository
+        uses: actions/checkout@v4
+        with:
+            token: ${{ secrets.PAT_TOKEN }}
+            fetch-depth: 0
+
+
+      - name: Backup Local Workflow
+        run: |
+          mkdir -p /tmp/workflow_backup
+          cp -r .github/workflows/* /tmp/workflow_backup/ 2>/dev/null || true
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch Target Code (Supports Short SHA, Tag, Full SHA)
+        run: |
+          git remote add target "https://github.com/${{ inputs.target_repo }}.git"
+          git fetch target --tags
+
+          git checkout -B "${{ inputs.branch_name }}"
+
+          # Resolve short SHA, tag, or full SHA
+          TARGET_COMMIT=$(git rev-parse --verify "${{ inputs.ref }}" 2>/dev/null || \
+                          git rev-parse --verify "target/${{ inputs.ref }}" 2>/dev/null || \
+                          git rev-parse --verify "refs/tags/${{ inputs.ref }}" 2>/dev/null || \
+                          git rev-parse --verify "refs/tags/${{ inputs.ref }}^{commit}" 2>/dev/null)
+
+          if [ -z "$TARGET_COMMIT" ]; then
+            echo "Error: Could not resolve commit or tag '${{ inputs.ref }}'"
+            exit 1
+          fi
+
+          echo "Resolved Commit: $TARGET_COMMIT"
+          git reset --hard "$TARGET_COMMIT"
+
+      - name: Patch Branch Triggers
+        run: |
+          # Allow target repo workflows to trigger on any branch push
+          if [ -d ".github/workflows" ]; then
+            sed -i 's/branches: .*/branches: ["*"]/g' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null || true
+          fi
+
+      - name: Self-Backup (Restore Rebuilder Workflow)
+        run: |
+          # Restores this workflow file so it is preserved across all branches
+          mkdir -p .github/workflows
+          cp -r /tmp/workflow_backup/* .github/workflows/ 2>/dev/null || true
+          git add .github/workflows/
+          git commit -m "Restore rebuilder workflow & patch push triggers" || true
+
+      - name: Push to Trigger Build
+        run: |
+          git push origin "${{ inputs.branch_name }}" --force
