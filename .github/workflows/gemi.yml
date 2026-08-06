@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       target_repo:
-        description: 'Target Repo (e.g. NVIDIAGameWorks/bridge-remix)'
+        description: 'Target Repo (e.g. ptitSeb/box64 or NVIDIAGameWorks/bridge-remix)'
         required: true
         type: string
       ref:
@@ -12,14 +12,15 @@ on:
         required: true
         type: string
       branch_name:
-        description: 'Target branch in your repo to trigger the build'
+        description: 'Branch to trigger build on'
         required: false
-        default: 'build-artifact'
+        default: 'main'
         type: string
-
-permissions:
-  contents: write
-
+      cleanup_commit_log:
+        description: 'Reset branch back to original state after trigger? (true/false)'
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   rebuild:
@@ -28,12 +29,16 @@ jobs:
       - name: Checkout Local Repository
         uses: actions/checkout@v4
         with:
-            token: ${{ secrets.PAT_TOKEN }}
-            fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 0
 
-
-      - name: Backup Local Workflow
+      - name: Save Original Branch State & Workflows
         run: |
+          # Save the current commit hash so we can revert back to it later
+          ORIGINAL_SHA=$(git rev-parse HEAD)
+          echo "ORIGINAL_SHA=$ORIGINAL_SHA" >> $GITHUB_ENV
+
+          # Backup local workflows
           mkdir -p /tmp/workflow_backup
           cp -r .github/workflows/* /tmp/workflow_backup/ 2>/dev/null || true
 
@@ -65,19 +70,29 @@ jobs:
 
       - name: Patch Branch Triggers
         run: |
-          # Allow target repo workflows to trigger on any branch push
           if [ -d ".github/workflows" ]; then
             sed -i 's/branches: .*/branches: ["*"]/g' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null || true
           fi
 
-      - name: Self-Backup (Restore Rebuilder Workflow)
+      - name: Restore Rebuilder Workflow
         run: |
-          # Restores this workflow file so it is preserved across all branches
           mkdir -p .github/workflows
           cp -r /tmp/workflow_backup/* .github/workflows/ 2>/dev/null || true
           git add .github/workflows/
-          git commit -m "Restore rebuilder workflow & patch push triggers" || true
+          git commit -m "Temp build commit" || true
 
-      - name: Push to Trigger Build
+      - name: Push Build Commit
         run: |
-          git push origin "${{ inputs.branch_name }}" --force
+          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git "${{ inputs.branch_name }}" --force
+
+      - name: Clean Up Commit History
+        if: ${{ inputs.cleanup_commit_log }}
+        run: |
+          echo "Waiting 30 seconds for GitHub Actions to pick up the run..."
+          sleep 30
+
+          echo "Resetting branch '${{ inputs.branch_name }}' back to original SHA: $ORIGINAL_SHA"
+          git reset --hard "$ORIGINAL_SHA"
+          
+          # Force push to remove the temporary build commit from history
+          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git "${{ inputs.branch_name }}" --force
