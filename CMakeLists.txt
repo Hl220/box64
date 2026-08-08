@@ -1179,20 +1179,21 @@ endif()
 set_source_files_properties(${OS_LINUX_SRC} ${ELFLOADER_SRC} ${INTERPRETER} ${WRAPPEDS} ${WRAPPEDS32} PROPERTIES COMPILE_OPTIONS "${CFLAGS}")
 
 # creates git_head.h
+set(BOX64_CUSTOM_GITREV "dae0917")  # <-- put your commit id here
+
 if(DYNAREC)
     add_custom_command(
         OUTPUT "${BOX64_ROOT}/src/git_head.h"
-        COMMAND sh -c "echo \\\#define GITREV \\\"$(git rev-parse --short HEAD)\\\">\"${BOX64_ROOT}/src/git_head.h\""
+        COMMAND sh -c "echo \\\#define GITREV \\\"${BOX64_CUSTOM_GITREV}\\\">\"${BOX64_ROOT}/src/git_head.h\""
         DEPENDS ${DYNAREC_SRC} ${DYNAREC_ASM} ${DYNAREC_PASS} ${ELFLOADER_SRC} ${INTERPRETER} ${WRAPPEDS} ${WRAPPEDS32} ${WRAPPEDS_HEAD} ${WRAPPEDS32_HEAD}
         VERBATIM)
 else()
     add_custom_command(
         OUTPUT "${BOX64_ROOT}/src/git_head.h"
-        COMMAND sh -c "echo \\\#define GITREV \\\"$(git rev-parse --short HEAD)\\\">\"${BOX64_ROOT}/src/git_head.h\""
+        COMMAND sh -c "echo \\\#define GITREV \\\"${BOX64_CUSTOM_GITREV}\\\">\"${BOX64_ROOT}/src/git_head.h\""
         DEPENDS ${ELFLOADER_SRC} ${INTERPRETER} ${WRAPPEDS} ${WRAPPEDS32} ${WRAPPEDS_HEAD} ${WRAPPEDS32_HEAD}
         VERBATIM)
 endif()
-
 add_custom_target(generate_git_head_target
   DEPENDS "${BOX64_ROOT}/src/git_head.h"
 )
