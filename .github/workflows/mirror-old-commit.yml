@@ -1,0 +1,73 @@
+name: Mirror old commit
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: "Source repo to clone (owner/name)"
+        required: true
+        type: string
+      commit_sha:
+        description: "Commit hash to hard-reset to"
+        required: true
+        type: string
+      target_repo:
+        description: "Target repo to push to (owner/name)"
+        required: true
+        type: string
+      branch:
+        description: "Branch name to push"
+        required: true
+        type: string
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          path: self
+
+      - name: Clone source repo (full history)
+        run: |
+          git clone https://github.com/${{ github.event.inputs.source_repo }}.git repo
+          cd repo
+          git fetch --unshallow || true
+
+      - name: Reset to target commit
+        working-directory: repo
+        run: |
+          git reset --hard ${{ github.event.inputs.commit_sha }}
+
+      - name: Restore this workflow file
+        run: |
+          mkdir -p repo/.github/workflows
+          cp self/.github/workflows/mirror-old-commit.yml repo/.github/workflows/mirror-old-commit.yml
+
+      - name: Configure git identity
+        working-directory: repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows
+          git commit -m "Restore mirror-old-commit.yml workflow" --allow-empty
+
+      - name: Add custom remote and push
+        working-directory: repo
+        env:
+          PUSH_TOKEN: ${{ secrets.PUSH_TOKEN }}
+        run: |
+          git remote add custom https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.event.inputs.target_repo }}.git
+          git push -u custom HEAD:${{ github.event.inputs.branch }} --force
+
+      - name: Disable all target repo workflows
+        env:
+          GH_TOKEN: ${{ secrets.PUSH_TOKEN }}
+        run: |
+          TARGET="${{ github.event.inputs.target_repo }}"
+          WORKFLOW_IDS=$(gh api "repos/$TARGET/actions/workflows" --jq '.workflows[].id')
+          
+          for ID in $WORKFLOW_IDS; do
+            gh api -X PUT "repos/$TARGET/actions/workflows/$ID/disable" || true
+          done
